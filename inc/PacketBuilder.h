@@ -7,14 +7,7 @@
 #include <iostream>
 
 // TODO: fold expression for adding arguments
-
-struct ConfigOptions{
-    static constexpr int packetSize = 16;
-};
-
-template<typename T>
-using Container = std::array<T, ConfigOptions::packetSize>;
-
+// TODO: more flexible way to add data (inserter)
 
 enum class PacketSlot{
     HEADER,
@@ -22,52 +15,60 @@ enum class PacketSlot{
     CRC
 };
 
-template<PacketSlot slot, typename T = int>
+/* using to determine type of std::array elements */
+template<typename T>
+using element_type_t = std::remove_reference_t<decltype(*std::begin(std::declval<T&>()))>;
+
+
+template<PacketSlot slot, typename Container>
 class PacketBuilder;
 
 template<>
-template<typename V>
-class PacketBuilder<PacketSlot::HEADER, V>;
+template<typename Container>
+class PacketBuilder<PacketSlot::HEADER, Container>;
 
 template<>
-template<typename V>
-class PacketBuilder<PacketSlot::CRC, V>{
+template<typename Container>
+class PacketBuilder<PacketSlot::CRC, Container>{
 private:
-    std::reference_wrapper<Container<V>> frame;
+    std::reference_wrapper<Container> frame;
 
-    PacketBuilder(Container<V>& packet): frame {packet} {}
+    PacketBuilder(Container& packet): frame {packet} {}
 
-    friend class PacketBuilder<PacketSlot::PAYLOAD, V>;
+    friend class PacketBuilder<PacketSlot::PAYLOAD, Container>;
 public:
+
     template<size_t bits>
-    auto attachCRC() -> PacketBuilder<PacketSlot::CRC, V>{
+    auto attachCRC() -> void{
 
         std::cout << "\nCRC FILLING";
-        return {frame.get()};
+
     }
 };
 
-template<typename V>
-class PacketBuilder<PacketSlot::HEADER, V>;
+template<typename Container>
+class PacketBuilder<PacketSlot::HEADER, Container>;
 
 template<>
-template<typename V>
-class PacketBuilder<PacketSlot::PAYLOAD, V>{
+template<typename Container>
+class PacketBuilder<PacketSlot::PAYLOAD, Container>{
 private:
-    std::reference_wrapper<Container<V>> frame;
+    std::reference_wrapper<Container> frame;
     size_t lastEnd;
 
-    PacketBuilder(Container<V>& packet, size_t lastIdx): frame {packet}, lastEnd{lastIdx} {}
+    PacketBuilder(Container& packet, size_t lastIdx): frame {packet}, lastEnd{lastIdx} {}
 
-    friend class PacketBuilder<PacketSlot::HEADER, V>;
+    friend class PacketBuilder<PacketSlot::HEADER, Container>;
 public:
-    template<size_t bits,
-            typename ...Args>
-    [[nodiscard]]auto attachPayload(Args ...args) -> PacketBuilder<PacketSlot::CRC>{
-        static_assert(sizeof...(Args) == bits);
-        static_assert((std::is_same_v<V, Args> && ...));
 
-        ((frame.get()[lastEnd++] = args), ...);
+    template<size_t  bits,
+            typename ...Args>
+    [[nodiscard]] auto attachPayload(Args ...args) -> PacketBuilder<PacketSlot::CRC, Container>{
+
+        static_assert(sizeof...(Args) == bits);
+        static_assert((std::is_same_v<element_type_t<Container>, Args> && ...));
+
+        ((frame.get().at(lastEnd++) = args), ...);
 
         std::cout << "\nPAYLOAD FILLING";
         return {frame.get()};
@@ -75,17 +76,20 @@ public:
 };
 
 template<>
-template<typename V>
-class PacketBuilder<PacketSlot::HEADER, V>{
+template<typename Container>
+class PacketBuilder<PacketSlot::HEADER, Container>{
 public:
-    template<size_t bits,
-            typename ...Args>
-    [[nodiscard]]auto attachHeader(Container<V>& packet, Args ...args) -> PacketBuilder<PacketSlot::PAYLOAD, V>{
-        static_assert(sizeof...(Args) == bits);
-        static_assert((std::is_same_v<V, Args> && ...));
+
+    template<size_t   bits,
+            typename  ...Args>
+    [[nodiscard]] auto attachHeader(Container& packet, Args ...args) -> PacketBuilder<PacketSlot::PAYLOAD, Container>{
+
+        static_assert(sizeof...(Args) == bits, "Number of values is not equal given in template param");
+        static_assert((std::is_same_v<element_type_t<Container>, Args> && ...), "Given values are not the same type");
+
         size_t idx = 0;
 
-        ((packet[idx++] = args), ...);
+        ((packet.at(idx++) = args), ...);
 
         std::cout << "\nHEADER FILLING";
 
@@ -93,6 +97,7 @@ public:
     }
 
 };
+
 
 
 #endif //PACKETBUILDER_PACKETBUILDER_H
